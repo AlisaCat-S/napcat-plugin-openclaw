@@ -56,8 +56,6 @@ jobs:
         run: |
           npm version ${{ steps.version.outputs.clean_version }} --no-git-tag-version --allow-same-version
 
-      - name: Install WebUI dependencies
-        run: cd src/webui && pnpm install
 
       - name: Build project
         run: pnpm run build
@@ -72,11 +70,10 @@ jobs:
           # 复制需要的文件到临时目录
           cp dist/index.mjs release/
           cp dist/package.json release/
-          cp -r dist/webui release/
 
           # 进入临时目录并压缩
           cd release
-          zip -r ../${PLUGIN_NAME}.zip index.mjs package.json webui
+          zip -r ../${PLUGIN_NAME}.zip index.mjs package.json
 
       - name: Verify zip contents
         run: |
