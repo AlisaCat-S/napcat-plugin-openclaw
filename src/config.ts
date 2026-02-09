@@ -15,3 +15,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
     groupSessionMode: 'user',
   },
 };
+
+export function buildConfigSchema(): any[] {
+  return [];
+}
