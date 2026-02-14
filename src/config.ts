@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
 
 export function buildConfigSchema(): PluginConfigSchema {
   return [
-    { key: '_header_openclaw', type: 'html', label: '<h3>OpenClaw 连接</h3>' },
+    { key: '_header_openclaw', type: 'text', label: '── OpenClaw 连接 ──' },
     {
       key: 'openclaw.token',
       type: 'string',
@@ -42,7 +42,7 @@ export function buildConfigSchema(): PluginConfigSchema {
       description: 'openclaw 可执行文件路径',
       default: DEFAULT_CONFIG.openclaw.cliPath,
     },
-    { key: '_header_behavior', type: 'html', label: '<h3>行为设置</h3>' },
+    { key: '_header_behavior', type: 'text', label: '── 行为设置 ──' },
     {
       key: 'behavior.privateChat',
       type: 'boolean',
