@@ -15,6 +15,8 @@ export const DEFAULT_CONFIG: PluginConfig = {
     userWhitelist: [],
     groupWhitelist: [],
     debounceMs: 2000,
+    resolveReply: true,
+    replyMaxDepth: 1,
     groupSessionMode: 'user',
   },
 };
@@ -93,6 +95,20 @@ export function buildConfigSchema(): PluginConfigSchema {
       label: '防抖时间 (ms)',
       description: '连续消息的防抖间隔（毫秒）',
       default: DEFAULT_CONFIG.behavior.debounceMs,
+    },
+    {
+      key: 'behavior.resolveReply',
+      type: 'boolean',
+      label: '解析引用消息',
+      description: '是否解析消息中引用（回复）的原始内容',
+      default: DEFAULT_CONFIG.behavior.resolveReply,
+    },
+    {
+      key: 'behavior.replyMaxDepth',
+      type: 'number',
+      label: '引用解析深度',
+      description: '引用消息的最大解析层数，默认 1（不递归解析引用中的引用）',
+      default: DEFAULT_CONFIG.behavior.replyMaxDepth,
     },
     {
       key: 'behavior.groupSessionMode',

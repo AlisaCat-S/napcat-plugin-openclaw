@@ -99,9 +99,10 @@ async function getGateway(): Promise<GatewayClient> {
 
 // ========== Message Extraction ==========
 
-function extractMessage(segments: any[]): { extractedText: string; extractedMedia: ExtractedMedia[] } {
+function extractMessage(segments: any[]): { extractedText: string; extractedMedia: ExtractedMedia[]; replyMessageId: string | null } {
   const textParts: string[] = [];
   const media: ExtractedMedia[] = [];
+  let replyMessageId: string | null = null;
 
   for (const seg of segments) {
     switch (seg.type) {
@@ -127,10 +128,70 @@ function extractMessage(segments: any[]): { extractedText: string; extractedMedi
       case 'video':
         if (seg.data?.url) media.push({ type: 'video', url: seg.data.url });
         break;
+      case 'reply':
+        if (seg.data?.id) replyMessageId = String(seg.data.id);
+        break;
     }
   }
 
-  return { extractedText: textParts.join(' '), extractedMedia: media };
+  return { extractedText: textParts.join(' '), extractedMedia: media, replyMessageId };
+}
+
+async function resolveReply(ctx: any, messageId: string): Promise<string | null> {
+  try {
+    const result = await ctx.actions.call(
+      'get_msg',
+      { message_id: messageId },
+      ctx.adapterName,
+      ctx.pluginManager?.config
+    );
+    const msg = result?.data || result;
+    if (!msg) return null;
+
+    const senderName = msg.sender?.nickname || msg.sender?.user_id || '未知';
+    const senderQQ = msg.sender?.user_id || '';
+    const segments = Array.isArray(msg.message) ? msg.message : [];
+
+    // Depth 1: extract without recursing into nested replies
+    const textParts: string[] = [];
+    const mediaParts: string[] = [];
+    for (const seg of segments) {
+      switch (seg.type) {
+        case 'text': {
+          const t = seg.data?.text?.trim();
+          if (t) textParts.push(t);
+          break;
+        }
+        case 'image':
+          if (seg.data?.url) mediaParts.push(`[image: ${seg.data.url}]`);
+          break;
+        case 'file':
+          if (seg.data?.url) mediaParts.push(`[file: ${seg.data.name || seg.data.url}]`);
+          break;
+        case 'record':
+          if (seg.data?.url) mediaParts.push(`[voice: ${seg.data.url}]`);
+          break;
+        case 'video':
+          if (seg.data?.url) mediaParts.push(`[video: ${seg.data.url}]`);
+          break;
+        case 'at':
+          textParts.push(`@${seg.data?.name || seg.data?.qq}`);
+          break;
+        // reply inside reply: skip (depth 1 only)
+      }
+    }
+
+    const body = textParts.join(' ');
+    const mediaStr = mediaParts.length > 0 ? '\n' + mediaParts.join('\n') : '';
+    // Fallback to raw_message if segments yielded nothing
+    const content = (body || msg.raw_message || '') + mediaStr;
+    if (!content.trim()) return null;
+
+    return `[引用 ${senderName}(${senderQQ}) 的消息]\n${content}\n[/引用]`;
+  } catch (e: any) {
+    logger?.warn(`[OpenClaw] 解析引用消息失败: ${e.message}`);
+    return null;
+  }
 }
 
 // ========== Text Extraction from Chat Event ==========
@@ -274,9 +335,16 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
     if (!shouldHandle) return;
 
-    const { extractedText, extractedMedia } = extractMessage(event.message || []);
+    const { extractedText, extractedMedia, replyMessageId } = extractMessage(event.message || []);
     const text = extractedText;
-    if (!text && extractedMedia.length === 0) return;
+    if (!text && extractedMedia.length === 0 && !replyMessageId) return;
+
+    // Resolve quoted/replied message
+    let replyContext = '';
+    if (replyMessageId && currentConfig.behavior.resolveReply) {
+      const resolved = await resolveReply(ctx, replyMessageId);
+      if (resolved) replyContext = resolved;
+    }
 
     const sessionBase = getSessionBase(messageType, userId, groupId);
 
@@ -327,7 +395,9 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
     identityParts.push(messageType === 'private' ? '私聊]' : '群聊]');
     const identityHeader = identityParts.join(' | ');
 
-    let openclawMessage = `${identityHeader}\n${text}`;
+    let openclawMessage = `${identityHeader}\n`;
+    if (replyContext) openclawMessage += replyContext + '\n';
+    openclawMessage += text || '';
     if (extractedMedia.length > 0) {
       const mediaInfo = extractedMedia.map((m) => `[${m.type}: ${m.url}]`).join('\n');
       openclawMessage += `\n\n${mediaInfo}`;
@@ -445,6 +515,8 @@ export const plugin_get_config = async () => {
     'behavior.userWhitelist': currentConfig.behavior.userWhitelist.join(', '),
     'behavior.groupWhitelist': currentConfig.behavior.groupWhitelist.join(', '),
     'behavior.debounceMs': currentConfig.behavior.debounceMs,
+    'behavior.resolveReply': currentConfig.behavior.resolveReply,
+    'behavior.replyMaxDepth': currentConfig.behavior.replyMaxDepth,
     'behavior.groupSessionMode': currentConfig.behavior.groupSessionMode,
   };
 };

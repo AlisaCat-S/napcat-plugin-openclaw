@@ -12,6 +12,8 @@ export interface PluginConfig {
     userWhitelist: number[];
     groupWhitelist: number[];
     debounceMs: number;
+    resolveReply: boolean;
+    replyMaxDepth: number;
     groupSessionMode: 'user' | 'shared';
   };
 }
