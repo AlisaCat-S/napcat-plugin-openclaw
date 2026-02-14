@@ -25,6 +25,89 @@ let configPath: string | null = null;
 let botUserId: string | number | null = null;
 let gatewayClient: GatewayClient | null = null;
 let currentConfig: PluginConfig = { ...DEFAULT_CONFIG };
+let cacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+// ========== Media Cache ==========
+
+function getCachePath(): string {
+  return currentConfig.media.cachePath;
+}
+
+function ensureCacheDir(): void {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function getCacheDirSize(): number {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) return 0;
+  let total = 0;
+  for (const f of fs.readdirSync(dir)) {
+    try { total += fs.statSync(path.join(dir, f)).size; } catch { /* skip */ }
+  }
+  return total;
+}
+
+function evictOldestFiles(needBytes: number): void {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) return;
+  const maxBytes = currentConfig.media.cacheMaxSizeMB * 1024 * 1024;
+  let currentSize = getCacheDirSize();
+  if (currentSize + needBytes <= maxBytes) return;
+
+  const files = fs.readdirSync(dir)
+    .map((f) => { try { const s = fs.statSync(path.join(dir, f)); return { name: f, mtimeMs: s.mtimeMs, size: s.size }; } catch { return null; } })
+    .filter(Boolean) as { name: string; mtimeMs: number; size: number }[];
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+  for (const f of files) {
+    if (currentSize + needBytes <= maxBytes) break;
+    try { fs.unlinkSync(path.join(dir, f.name)); currentSize -= f.size; } catch { /* skip */ }
+  }
+}
+
+function cleanExpiredCache(): void {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) return;
+  const ttlMs = currentConfig.media.cacheTTLMinutes * 60 * 1000;
+  const now = Date.now();
+  for (const f of fs.readdirSync(dir)) {
+    try {
+      const fp = path.join(dir, f);
+      if (now - fs.statSync(fp).mtimeMs > ttlMs) fs.unlinkSync(fp);
+    } catch { /* skip */ }
+  }
+}
+
+function startCacheCleanup(): void {
+  stopCacheCleanup();
+  if (!currentConfig.media.cacheEnabled) return;
+  const intervalMs = currentConfig.media.cacheTTLMinutes * 60 * 1000;
+  cacheCleanupTimer = setInterval(() => cleanExpiredCache(), intervalMs);
+}
+
+function stopCacheCleanup(): void {
+  if (cacheCleanupTimer) { clearInterval(cacheCleanupTimer); cacheCleanupTimer = null; }
+}
+
+async function downloadMedia(url: string, ext: string): Promise<string | null> {
+  try {
+    ensureCacheDir();
+    const filename = `${randomUUID()}${ext}`;
+    const filepath = path.join(getCachePath(), filename);
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+
+    evictOldestFiles(buf.length);
+    fs.writeFileSync(filepath, buf);
+    return filepath;
+  } catch (e: any) {
+    logger?.warn(`[OpenClaw] 媒体下载失败: ${e.message}`);
+    return null;
+  }
+}
 
 // ========== Local Commands ==========
 
@@ -292,6 +375,7 @@ export const plugin_init = async (ctx: any): Promise<void> => {
   logger.info(`[OpenClaw] 网关: ${currentConfig.openclaw.gatewayUrl}`);
   logger.info('[OpenClaw] 模式: 私聊全透传 + 群聊@触发 + 命令透传');
   logger.info('[OpenClaw] QQ Channel 插件初始化完成');
+  startCacheCleanup();
 };
 
 export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
@@ -399,8 +483,20 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
     if (replyContext) openclawMessage += replyContext + '\n';
     openclawMessage += text || '';
     if (extractedMedia.length > 0) {
-      const mediaInfo = extractedMedia.map((m) => `[${m.type}: ${m.url}]`).join('\n');
-      openclawMessage += `\n\n${mediaInfo}`;
+      const mediaLines: string[] = [];
+      for (const m of extractedMedia) {
+        if (currentConfig.media.cacheEnabled && m.url) {
+          const extMap: Record<string, string> = { image: '.jpg', file: '', voice: '.amr', video: '.mp4' };
+          const ext = m.name ? path.extname(m.name) : (extMap[m.type] || '');
+          const localPath = await downloadMedia(m.url, ext);
+          if (localPath) {
+            mediaLines.push(`[${m.type}: file://${localPath}${m.name ? ` (${m.name})` : ''}]`);
+            continue;
+          }
+        }
+        mediaLines.push(`[${m.type}: ${m.url}${m.name ? ` (${m.name})` : ''}]`);
+      }
+      openclawMessage += '\n\n' + mediaLines.join('\n');
     }
 
     logger.info(
@@ -494,6 +590,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 };
 
 export const plugin_cleanup = async (): Promise<void> => {
+  stopCacheCleanup();
   if (gatewayClient) {
     gatewayClient.disconnect();
     gatewayClient = null;
@@ -518,6 +615,10 @@ export const plugin_get_config = async () => {
     'behavior.resolveReply': currentConfig.behavior.resolveReply,
     'behavior.replyMaxDepth': currentConfig.behavior.replyMaxDepth,
     'behavior.groupSessionMode': currentConfig.behavior.groupSessionMode,
+    'media.cacheEnabled': currentConfig.media.cacheEnabled,
+    'media.cachePath': currentConfig.media.cachePath,
+    'media.cacheMaxSizeMB': currentConfig.media.cacheMaxSizeMB,
+    'media.cacheTTLMinutes': currentConfig.media.cacheTTLMinutes,
   };
 };
 
@@ -552,6 +653,7 @@ export const plugin_set_config = async (ctx: any, config: any): Promise<void> =>
       logger?.error('[OpenClaw] 保存配置失败: ' + e.message);
     }
   }
+  startCacheCleanup();
 };
 
 // ========== Utils ==========

@@ -19,6 +19,12 @@ export const DEFAULT_CONFIG: PluginConfig = {
     replyMaxDepth: 1,
     groupSessionMode: 'user',
   },
+  media: {
+    cacheEnabled: false,
+    cachePath: '/tmp/napcat/napcat-plugin-openclaw/download',
+    cacheMaxSizeMB: 2048,
+    cacheTTLMinutes: 60,
+  },
 };
 
 export function buildConfigSchema(): PluginConfigSchema {
@@ -120,6 +126,35 @@ export function buildConfigSchema(): PluginConfigSchema {
         { label: '独立会话 (每人独立)', value: 'user' },
         { label: '共享会话 (群共享)', value: 'shared' },
       ],
+    },
+    { key: '_header_media', type: 'text', label: '── 多媒体缓存 ──' },
+    {
+      key: 'media.cacheEnabled',
+      type: 'boolean',
+      label: '启用缓存模式',
+      description: '下载多媒体文件到本地，将本地路径传递给后端（而非 URL）',
+      default: DEFAULT_CONFIG.media.cacheEnabled,
+    },
+    {
+      key: 'media.cachePath',
+      type: 'string',
+      label: '缓存目录',
+      description: '多媒体文件下载缓存路径',
+      default: DEFAULT_CONFIG.media.cachePath,
+    },
+    {
+      key: 'media.cacheMaxSizeMB',
+      type: 'number',
+      label: '缓存上限 (MB)',
+      description: '缓存目录最大占用空间，每次写入前检查，超出则清理最旧文件',
+      default: DEFAULT_CONFIG.media.cacheMaxSizeMB,
+    },
+    {
+      key: 'media.cacheTTLMinutes',
+      type: 'number',
+      label: '缓存过期 (分钟)',
+      description: '缓存文件定时清理间隔，默认 60 分钟',
+      default: DEFAULT_CONFIG.media.cacheTTLMinutes,
     },
   ];
 }

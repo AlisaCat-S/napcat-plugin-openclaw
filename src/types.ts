@@ -16,6 +16,12 @@ export interface PluginConfig {
     replyMaxDepth: number;
     groupSessionMode: 'user' | 'shared';
   };
+  media: {
+    cacheEnabled: boolean;
+    cachePath: string;
+    cacheMaxSizeMB: number;
+    cacheTTLMinutes: number;
+  };
 }
 
 export interface ExtractedMedia {
