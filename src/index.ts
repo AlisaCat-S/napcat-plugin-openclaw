@@ -309,6 +309,22 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
     if (messageType === 'private') setTypingStatus(ctx, userId, true);
 
+    // Resolve group name for group messages
+    let groupName = '';
+    if (messageType === 'group' && groupId) {
+      try {
+        const info = await ctx.actions.call(
+          'get_group_info',
+          { group_id: String(groupId) },
+          ctx.adapterName,
+          ctx.pluginManager?.config
+        );
+        groupName = info?.group_name || '';
+      } catch {
+        groupName = '';
+      }
+    }
+
     // Send via Gateway RPC + event listener (non-streaming)
     const sessionKey = getSessionKey(sessionBase);
     const runId = randomUUID();
@@ -356,6 +372,12 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
         sessionKey,
         message: openclawMessage,
         idempotencyKey: runId,
+        metadata: {
+          userId: String(userId),
+          nickname,
+          messageType,
+          ...(messageType === 'group' ? { groupId: String(groupId), groupName } : {}),
+        },
       });
 
       logger.info(`[OpenClaw] chat.send 已接受: runId=${sendResult?.runId}`);
