@@ -305,11 +305,16 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
       }
     }
 
-    // Build message
-    let openclawMessage = text;
+    // Build message with sender identity context
+    const identityParts = [`[发送者: ${nickname} (QQ: ${userId})`];
+    if (messageType === 'group' && groupId) identityParts.push(`群: ${groupName || groupId}`);
+    identityParts.push(messageType === 'private' ? '私聊]' : '群聊]');
+    const identityHeader = identityParts.join(' | ');
+
+    let openclawMessage = `${identityHeader}\n${text}`;
     if (extractedMedia.length > 0) {
       const mediaInfo = extractedMedia.map((m) => `[${m.type}: ${m.url}]`).join('\n');
-      openclawMessage = openclawMessage ? `${openclawMessage}\n\n${mediaInfo}` : mediaInfo;
+      openclawMessage += `\n\n${mediaInfo}`;
     }
 
     logger.info(
@@ -381,12 +386,6 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
         sessionKey,
         message: openclawMessage,
         idempotencyKey: runId,
-        metadata: {
-          userId: String(userId),
-          nickname,
-          messageType,
-          ...(messageType === 'group' ? { groupId: String(groupId), groupName } : {}),
-        },
       });
 
       logger.info(`[OpenClaw] chat.send 已接受: runId=${sendResult?.runId}`);
