@@ -305,6 +305,22 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
       }
     }
 
+    // Resolve group name for group messages
+    let groupName = '';
+    if (messageType === 'group' && groupId) {
+      try {
+        const info = await ctx.actions.call(
+          'get_group_info',
+          { group_id: String(groupId) },
+          ctx.adapterName,
+          ctx.pluginManager?.config
+        );
+        groupName = info?.group_name || '';
+      } catch {
+        groupName = '';
+      }
+    }
+
     // Build message with sender identity context
     const identityParts = [`[发送者: ${nickname} (QQ: ${userId})`];
     if (messageType === 'group' && groupId) identityParts.push(`群: ${groupName || groupId}`);
@@ -322,22 +338,6 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
     );
 
     if (messageType === 'private') setTypingStatus(ctx, userId, true);
-
-    // Resolve group name for group messages
-    let groupName = '';
-    if (messageType === 'group' && groupId) {
-      try {
-        const info = await ctx.actions.call(
-          'get_group_info',
-          { group_id: String(groupId) },
-          ctx.adapterName,
-          ctx.pluginManager?.config
-        );
-        groupName = info?.group_name || '';
-      } catch {
-        groupName = '';
-      }
-    }
 
     // Send via Gateway RPC + event listener (non-streaming)
     const sessionKey = getSessionKey(sessionBase);
