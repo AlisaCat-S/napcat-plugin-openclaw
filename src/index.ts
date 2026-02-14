@@ -331,7 +331,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
         gw.eventHandlers.set('chat', (payload: any) => {
           if (!payload) return;
           logger.info(`[OpenClaw] chat event: state=${payload.state} session=${payload.sessionKey} run=${payload.runId?.slice(0, 8)}`);
-          if (payload.sessionKey !== sessionKey) return;
+          if (payload.sessionKey !== sessionKey && !payload.sessionKey?.endsWith(':' + sessionKey)) return;
 
           if (payload.state === 'final') {
             const text = extractContentText(payload.message);
