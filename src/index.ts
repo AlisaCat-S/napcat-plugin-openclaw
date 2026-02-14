@@ -323,7 +323,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
     // Build message with sender identity context
     const identityParts = [`[发送者: ${nickname} (QQ: ${userId})`];
-    if (messageType === 'group' && groupId) identityParts.push(`群: ${groupName || groupId}`);
+    if (messageType === 'group' && groupId) identityParts.push(`群: ${groupName || groupId} (${groupId})`);
     identityParts.push(messageType === 'private' ? '私聊]' : '群聊]');
     const identityHeader = identityParts.join(' | ');
 
