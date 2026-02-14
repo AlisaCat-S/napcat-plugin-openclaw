@@ -531,6 +531,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
           if (payload.state === 'final') {
             const text = extractContentText(payload.message);
+            logger.info(`[OpenClaw] final payload.message type=${typeof payload.message}, keys=${payload.message ? Object.keys(payload.message) : 'null'}, extracted="${text?.slice(0, 60)}"`);
             cleanup();
             resolve(text?.trim() || null);
           }
