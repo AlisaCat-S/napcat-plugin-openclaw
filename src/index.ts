@@ -315,7 +315,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
           ctx.adapterName,
           ctx.pluginManager?.config
         );
-        groupName = info?.group_name || '';
+        groupName = info?.data?.group_name || info?.group_name || '';
       } catch {
         groupName = '';
       }
