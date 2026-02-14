@@ -10,6 +10,8 @@ export const DEFAULT_CONFIG: PluginConfig = {
   behavior: {
     privateChat: true,
     groupAtOnly: true,
+    adminQQ: [],
+    commandAdminOnly: false,
     userWhitelist: [],
     groupWhitelist: [],
     debounceMs: 2000,
@@ -56,6 +58,20 @@ export function buildConfigSchema(): PluginConfigSchema {
       label: '群聊仅 @',
       description: '群聊中是否仅响应 @ 消息',
       default: DEFAULT_CONFIG.behavior.groupAtOnly,
+    },
+    {
+      key: 'behavior.adminQQ',
+      type: 'string',
+      label: '管理员 QQ',
+      description: '管理员 QQ 号，多个用英文逗号分隔，留空表示不限制',
+      default: '',
+    },
+    {
+      key: 'behavior.commandAdminOnly',
+      type: 'boolean',
+      label: '指令仅管理员',
+      description: '开启后 / 开头的指令仅管理员可使用，其他人的指令消息将被忽略',
+      default: DEFAULT_CONFIG.behavior.commandAdminOnly,
     },
     {
       key: 'behavior.userWhitelist',

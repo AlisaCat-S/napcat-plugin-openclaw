@@ -280,6 +280,15 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
     const sessionBase = getSessionBase(messageType, userId, groupId);
 
+    // Command permission check: if commandAdminOnly is on, non-admin /commands are ignored
+    if (text?.startsWith('/') && currentConfig.behavior.commandAdminOnly) {
+      const admins = currentConfig.behavior.adminQQ;
+      if (admins.length > 0 && !admins.some((id) => Number(id) === Number(userId))) {
+        logger.info(`[OpenClaw] 非管理员指令已忽略: ${nickname}(${userId})`);
+        return;
+      }
+    }
+
     // Local commands
     if (text?.startsWith('/')) {
       const spaceIdx = text.indexOf(' ');
@@ -432,6 +441,8 @@ export const plugin_get_config = async () => {
     'openclaw.cliPath': currentConfig.openclaw.cliPath,
     'behavior.privateChat': currentConfig.behavior.privateChat,
     'behavior.groupAtOnly': currentConfig.behavior.groupAtOnly,
+    'behavior.adminQQ': currentConfig.behavior.adminQQ.join(', '),
+    'behavior.commandAdminOnly': currentConfig.behavior.commandAdminOnly,
     'behavior.userWhitelist': currentConfig.behavior.userWhitelist.join(', '),
     'behavior.groupWhitelist': currentConfig.behavior.groupWhitelist.join(', '),
     'behavior.debounceMs': currentConfig.behavior.debounceMs,
@@ -443,6 +454,10 @@ export const plugin_set_config = async (ctx: any, config: any): Promise<void> =>
   const unflattened = unflattenConfig(config);
   // Convert comma-separated whitelist strings back to number[]
   if (unflattened.behavior) {
+    if (typeof unflattened.behavior.adminQQ === 'string') {
+      unflattened.behavior.adminQQ = unflattened.behavior.adminQQ
+        .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
+    }
     if (typeof unflattened.behavior.userWhitelist === 'string') {
       unflattened.behavior.userWhitelist = unflattened.behavior.userWhitelist
         .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);

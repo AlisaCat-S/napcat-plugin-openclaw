@@ -7,6 +7,8 @@ export interface PluginConfig {
   behavior: {
     privateChat: boolean;
     groupAtOnly: boolean;
+    adminQQ: number[];
+    commandAdminOnly: boolean;
     userWhitelist: number[];
     groupWhitelist: number[];
     debounceMs: number;
