@@ -369,21 +369,62 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
   const idKey = messageType === 'group' ? 'group_id' : 'user_id';
   const idVal = String(messageType === 'group' ? groupId : userId);
 
-  const maxLen = 3000;
-  if (text.length <= maxLen) {
-    await ctx.actions.call(action, { [idKey]: idVal, message: text }, ctx.adapterName, ctx.pluginManager?.config);
-  } else {
-    const total = Math.ceil(text.length / maxLen);
-    for (let i = 0; i < text.length; i += maxLen) {
-      const idx = Math.floor(i / maxLen) + 1;
-      const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
-      await ctx.actions.call(
-        action,
-        { [idKey]: idVal, message: prefix + text.slice(i, i + maxLen) },
-        ctx.adapterName,
-        ctx.pluginManager?.config
-      );
-      if (i + maxLen < text.length) await sleep(1000);
+  // Extract MEDIA: lines from reply
+  const mediaRegex = /^MEDIA:\s*(.+)$/gm;
+  const mediaFiles: string[] = [];
+  let match;
+  while ((match = mediaRegex.exec(text)) !== null) {
+    const filePath = match[1].trim();
+    if (filePath) mediaFiles.push(filePath);
+  }
+  const cleanText = text.replace(/^MEDIA:\s*.+$/gm, '').trim();
+
+  // Send text part
+  if (cleanText) {
+    const maxLen = 3000;
+    if (cleanText.length <= maxLen) {
+      await ctx.actions.call(action, { [idKey]: idVal, message: cleanText }, ctx.adapterName, ctx.pluginManager?.config);
+    } else {
+      const total = Math.ceil(cleanText.length / maxLen);
+      for (let i = 0; i < cleanText.length; i += maxLen) {
+        const idx = Math.floor(i / maxLen) + 1;
+        const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
+        await ctx.actions.call(
+          action,
+          { [idKey]: idVal, message: prefix + cleanText.slice(i, i + maxLen) },
+          ctx.adapterName,
+          ctx.pluginManager?.config
+        );
+        if (i + maxLen < cleanText.length) await sleep(1000);
+      }
+    }
+  }
+
+  // Send media files
+  for (const filePath of mediaFiles) {
+    try {
+      const fileName = path.basename(filePath);
+      const ext = path.extname(fileName).toLowerCase();
+      const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+
+      if (imageExts.includes(ext)) {
+        // Send as inline image message
+        const message = [{ type: 'image', data: { file: `file://${filePath}` } }];
+        await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
+      } else {
+        // Send as file upload
+        if (messageType === 'group') {
+          await ctx.actions.call('upload_group_file', {
+            group_id: idVal, file: filePath, name: fileName, upload_file: true,
+          }, ctx.adapterName, ctx.pluginManager?.config);
+        } else {
+          await ctx.actions.call('upload_private_file', {
+            user_id: idVal, file: filePath, name: fileName, upload_file: true,
+          }, ctx.adapterName, ctx.pluginManager?.config);
+        }
+      }
+    } catch (e: any) {
+      logger?.warn(`[OpenClaw] 发送文件失败 ${filePath}: ${e.message}`);
     }
   }
 }
