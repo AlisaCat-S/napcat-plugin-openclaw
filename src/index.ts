@@ -215,6 +215,12 @@ function extractMessage(segments: any[]): { extractedText: string; extractedMedi
       case 'reply':
         if (seg.data?.id) replyMessageId = String(seg.data.id);
         break;
+      case 'face':
+        textParts.push(`[表情:${seg.data?.id || '?'}]`);
+        break;
+      case 'mface':
+        textParts.push(seg.data?.summary || '[商城表情]');
+        break;
     }
   }
 
@@ -262,6 +268,12 @@ async function resolveReply(ctx: any, messageId: string): Promise<string | null>
             break;
           case 'at':
             textParts.push(`@${seg.data?.name || seg.data?.qq}`);
+            break;
+          case 'face':
+            textParts.push(`[表情:${seg.data?.id || '?'}]`);
+            break;
+          case 'mface':
+            textParts.push(seg.data?.summary || '[商城表情]');
             break;
         }
       }
