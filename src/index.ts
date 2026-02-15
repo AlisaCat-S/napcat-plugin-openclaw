@@ -25,6 +25,89 @@ let configPath: string | null = null;
 let botUserId: string | number | null = null;
 let gatewayClient: GatewayClient | null = null;
 let currentConfig: PluginConfig = { ...DEFAULT_CONFIG };
+let cacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+// ========== Media Cache ==========
+
+function getCachePath(): string {
+  return currentConfig.media.cachePath;
+}
+
+function ensureCacheDir(): void {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function getCacheDirSize(): number {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) return 0;
+  let total = 0;
+  for (const f of fs.readdirSync(dir)) {
+    try { total += fs.statSync(path.join(dir, f)).size; } catch { /* skip */ }
+  }
+  return total;
+}
+
+function evictOldestFiles(needBytes: number): void {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) return;
+  const maxBytes = currentConfig.media.cacheMaxSizeMB * 1024 * 1024;
+  let currentSize = getCacheDirSize();
+  if (currentSize + needBytes <= maxBytes) return;
+
+  const files = fs.readdirSync(dir)
+    .map((f) => { try { const s = fs.statSync(path.join(dir, f)); return { name: f, mtimeMs: s.mtimeMs, size: s.size }; } catch { return null; } })
+    .filter(Boolean) as { name: string; mtimeMs: number; size: number }[];
+  files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+  for (const f of files) {
+    if (currentSize + needBytes <= maxBytes) break;
+    try { fs.unlinkSync(path.join(dir, f.name)); currentSize -= f.size; } catch { /* skip */ }
+  }
+}
+
+function cleanExpiredCache(): void {
+  const dir = getCachePath();
+  if (!fs.existsSync(dir)) return;
+  const ttlMs = currentConfig.media.cacheTTLMinutes * 60 * 1000;
+  const now = Date.now();
+  for (const f of fs.readdirSync(dir)) {
+    try {
+      const fp = path.join(dir, f);
+      if (now - fs.statSync(fp).mtimeMs > ttlMs) fs.unlinkSync(fp);
+    } catch { /* skip */ }
+  }
+}
+
+function startCacheCleanup(): void {
+  stopCacheCleanup();
+  if (!currentConfig.media.cacheEnabled) return;
+  const intervalMs = currentConfig.media.cacheTTLMinutes * 60 * 1000;
+  cacheCleanupTimer = setInterval(() => cleanExpiredCache(), intervalMs);
+}
+
+function stopCacheCleanup(): void {
+  if (cacheCleanupTimer) { clearInterval(cacheCleanupTimer); cacheCleanupTimer = null; }
+}
+
+async function downloadMedia(url: string, ext: string): Promise<string | null> {
+  try {
+    ensureCacheDir();
+    const filename = `${randomUUID()}${ext}`;
+    const filepath = path.join(getCachePath(), filename);
+
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+
+    evictOldestFiles(buf.length);
+    fs.writeFileSync(filepath, buf);
+    return filepath;
+  } catch (e: any) {
+    logger?.warn(`[OpenClaw] 媒体下载失败: ${e.message}`);
+    return null;
+  }
+}
 
 // ========== Local Commands ==========
 
@@ -73,6 +156,7 @@ const sessionEpochs = new Map<string, number>();
 
 function getSessionBase(messageType: string, userId: number | string, groupId?: number | string): string {
   if (messageType === 'private') return `qq-${userId}`;
+  if (currentConfig.behavior.groupSessionMode === 'shared') return `qq-g${groupId}`;
   return `qq-g${groupId}-${userId}`;
 }
 
@@ -97,11 +181,56 @@ async function getGateway(): Promise<GatewayClient> {
   return gatewayClient;
 }
 
+// ========== QQ Face Emoji Map ==========
+
+const FACE_MAP: Record<number, string> = {
+  0:'惊讶',1:'撇嘴',2:'色',3:'发呆',4:'得意',5:'流泪',6:'害羞',7:'闭嘴',8:'睡',9:'大哭',
+  10:'尴尬',11:'发怒',12:'调皮',13:'呲牙',14:'微笑',15:'难过',16:'酷',18:'抓狂',19:'吐',
+  20:'偷笑',21:'可爱',22:'白眼',23:'傲慢',24:'饥饿',25:'困',26:'惊恐',27:'流汗',28:'憨笑',
+  29:'悠闲',30:'奋斗',31:'咒骂',32:'疑问',33:'嘘',34:'晕',35:'折磨',36:'衰',37:'骷髅',
+  38:'敲打',39:'再见',46:'猪头',49:'拥抱',53:'蛋糕',54:'闪电',55:'炸弹',56:'刀',57:'足球',
+  59:'便便',60:'咖啡',61:'饭',63:'玫瑰',64:'凋谢',66:'爱心',67:'心碎',69:'礼物',74:'太阳',
+  75:'月亮',76:'赞',77:'踩',78:'握手',79:'胜利',85:'飞吻',86:'怄火',89:'西瓜',96:'冷汗',
+  97:'擦汗',98:'抠鼻',99:'鼓掌',100:'糗大了',101:'坏笑',102:'左哼哼',103:'右哼哼',104:'哈欠',
+  105:'鄙视',106:'委屈',107:'快哭了',108:'阴险',109:'亲亲',110:'吓',111:'可怜',112:'菜刀',
+  113:'啤酒',114:'篮球',115:'乒乓',116:'示爱',117:'瓢虫',118:'抱拳',119:'勾引',120:'拳头',
+  121:'差劲',122:'爱你',123:'NO',124:'OK',125:'转圈',126:'磕头',127:'回头',128:'跳绳',
+  129:'挥手',130:'激动',131:'街舞',132:'献吻',133:'左太极',134:'右太极',136:'双喜',137:'鞭炮',
+  138:'灯笼',140:'K歌',141:'喝彩',142:'祈祷',143:'爆筋',144:'棒棒糖',145:'喝奶',146:'下面',
+  147:'香蕉',148:'飞机',149:'开车',150:'高铁左',151:'车厢',152:'高铁右',153:'多云',154:'下雨',
+  155:'钞票',156:'熊猫',157:'灯泡',158:'风车',159:'闹钟',160:'打伞',161:'彩球',162:'钻戒',
+  163:'沙发',164:'纸巾',165:'药',166:'手枪',167:'青蛙',168:'茶',169:'眨眼',170:'泪奔',
+  171:'无奈',172:'卖萌',173:'小纠结',174:'喷血',176:'惊喜',177:'骚扰',178:'小红花',179:'笑哭',
+  180:'我最美',181:'河蟹',182:'羊驼',185:'幽灵',187:'大笑',188:'不开心',189:'冷漠',190:'呃',
+  191:'好棒',192:'拜托',193:'点赞',194:'无聊',195:'托脸',196:'吃',197:'送花',198:'害怕',
+  199:'花痴',200:'小样儿',201:'飙泪',202:'我不看',203:'托腮',204:'啵啵',205:'糊脸',
+  206:'拍头',207:'扯一扯',208:'舔一舔',209:'蹭一蹭',210:'拽炸天',211:'顶呱呱',
+  212:'抱抱',213:'暴击',214:'开枪',215:'撩一撩',216:'拍桌',217:'拍手',218:'恭喜',
+  219:'干杯',220:'嘲讽',221:'哼',222:'佛系',223:'掐一掐',224:'惊呆',225:'颤抖',
+  226:'啃头',227:'偷看',228:'扇脸',229:'原谅',230:'喷脸',231:'生日快乐',232:'头撞击',
+  233:'甩头',234:'扔狗',237:'加油必胜',238:'加油抱抱',239:'口罩护体',240:'搬砖中',
+  241:'忙到飞起',242:'脑阔疼',243:'沧桑',244:'捂脸',245:'辣眼睛',246:'哦哟',247:'头秃',
+  260:'让我看看',261:'敬礼',262:'狗狗',263:'无眼笑',264:'敲开心',265:'我酸了',266:'太南了',
+  267:'辣椒酱',268:'汪汪',269:'汗',270:'打脸',271:'击掌',272:'无语',273:'社会社会',
+  274:'拍了拍',275:'宝贝',276:'贴贴',277:'骰子',278:'石头剪刀布',
+  281:'让我康康',282:'叹气',283:'菜汪',284:'狗头',285:'滑稽',286:'花朵脸',287:'我看看',
+  290:'摸鱼',293:'魔鬼笑',294:'哦',295:'请',296:'睁眼',297:'敲开心2',298:'摸锦鲤',
+  299:'期待',300:'拿到红包',301:'真好',302:'拜谢',303:'元宝',304:'牛啊',305:'胖三斤',
+  306:'好闪',307:'左拜年',308:'右拜年',309:'红包包',310:'右亲亲',311:'牛气冲天',
+  312:'喵喵',314:'仔细分析',315:'加油',316:'我没事',317:'菜狗',318:'崇拜',319:'比心',
+  320:'庆祝',322:'拒绝',324:'嫌弃',326:'吃糖',
+};
+
+function faceName(id: string | number): string {
+  return FACE_MAP[Number(id)] || `表情${id}`;
+}
+
 // ========== Message Extraction ==========
 
-function extractMessage(segments: any[]): { extractedText: string; extractedMedia: ExtractedMedia[] } {
+function extractMessage(segments: any[]): { extractedText: string; extractedMedia: ExtractedMedia[]; replyMessageId: string | null } {
   const textParts: string[] = [];
   const media: ExtractedMedia[] = [];
+  let replyMessageId: string | null = null;
 
   for (const seg of segments) {
     switch (seg.type) {
@@ -127,10 +256,144 @@ function extractMessage(segments: any[]): { extractedText: string; extractedMedi
       case 'video':
         if (seg.data?.url) media.push({ type: 'video', url: seg.data.url });
         break;
+      case 'reply':
+        if (seg.data?.id) replyMessageId = String(seg.data.id);
+        break;
+      case 'face':
+        textParts.push(`[${faceName(seg.data?.id)}]`);
+        break;
+      case 'mface': {
+        const summary = seg.data?.summary || '[商城表情]';
+        if (currentConfig.media.cacheEnabled && currentConfig.media.parseMface) {
+          const emojiId = seg.data?.emoji_id;
+          if (emojiId) {
+            const url = `https://gxh.vip.qq.com/club/item/parcel/item/${emojiId.slice(0, 2)}/${emojiId}/raw300.gif`;
+            media.push({ type: 'image', url });
+          }
+        }
+        textParts.push(summary);
+        break;
+      }
     }
   }
 
-  return { extractedText: textParts.join(' '), extractedMedia: media };
+  return { extractedText: textParts.join(' '), extractedMedia: media, replyMessageId };
+}
+
+async function resolveReply(ctx: any, messageId: string): Promise<string | null> {
+  try {
+    const result = await ctx.actions.call(
+      'get_msg',
+      { message_id: messageId },
+      ctx.adapterName,
+      ctx.pluginManager?.config
+    );
+    const msg = result?.data || result;
+    if (!msg) return null;
+
+    const senderName = msg.sender?.nickname || msg.sender?.user_id || '未知';
+    const senderQQ = msg.sender?.user_id || '';
+
+    const textParts: string[] = [];
+    const mediaItems: ExtractedMedia[] = [];
+
+    // Try segments array first
+    const segments = Array.isArray(msg.message) ? msg.message : [];
+    if (segments.length > 0) {
+      for (const seg of segments) {
+        switch (seg.type) {
+          case 'text': {
+            const t = seg.data?.text?.trim();
+            if (t) textParts.push(t);
+            break;
+          }
+          case 'image':
+            if (seg.data?.url) mediaItems.push({ type: 'image', url: seg.data.url });
+            break;
+          case 'file':
+            if (seg.data?.url) mediaItems.push({ type: 'file', url: seg.data.url, name: seg.data?.name });
+            break;
+          case 'record':
+            if (seg.data?.url) mediaItems.push({ type: 'voice', url: seg.data.url });
+            break;
+          case 'video':
+            if (seg.data?.url) mediaItems.push({ type: 'video', url: seg.data.url });
+            break;
+          case 'at':
+            textParts.push(`@${seg.data?.name || seg.data?.qq}`);
+            break;
+          case 'face':
+            textParts.push(`[${faceName(seg.data?.id)}]`);
+            break;
+          case 'mface': {
+            const summary = seg.data?.summary || '[商城表情]';
+            if (currentConfig.media.cacheEnabled && currentConfig.media.parseMface) {
+              const emojiId = seg.data?.emoji_id;
+              if (emojiId) {
+                const url = `https://gxh.vip.qq.com/club/item/parcel/item/${emojiId.slice(0, 2)}/${emojiId}/raw300.gif`;
+                mediaItems.push({ type: 'image', url });
+              }
+            }
+            textParts.push(summary);
+            break;
+          }
+        }
+      }
+    } else if (msg.raw_message && typeof msg.raw_message === 'string') {
+      // Parse CQ codes from raw_message
+      const raw = msg.raw_message;
+      let lastIdx = 0;
+      const cqRegex = /\[CQ:(\w+)((?:,[^,\]]+)*)\]/g;
+      let match;
+      while ((match = cqRegex.exec(raw)) !== null) {
+        const before = raw.slice(lastIdx, match.index).trim();
+        if (before) textParts.push(before);
+        lastIdx = match.index + match[0].length;
+
+        const cqType = match[1];
+        const paramsStr = match[2];
+        const params: Record<string, string> = {};
+        if (paramsStr) {
+          for (const p of paramsStr.slice(1).split(',')) {
+            const eq = p.indexOf('=');
+            if (eq > 0) params[p.slice(0, eq)] = p.slice(eq + 1);
+          }
+        }
+        if (cqType === 'image' && params.url) mediaItems.push({ type: 'image', url: params.url });
+        else if (cqType === 'file' && params.url) mediaItems.push({ type: 'file', url: params.url, name: params.file });
+        else if (cqType === 'record' && params.url) mediaItems.push({ type: 'voice', url: params.url });
+        else if (cqType === 'video' && params.url) mediaItems.push({ type: 'video', url: params.url });
+        else if (cqType === 'at') textParts.push(`@${params.name || params.qq || ''}`);
+      }
+      const tail = raw.slice(lastIdx).trim();
+      if (tail) textParts.push(tail);
+    }
+
+    // Build media lines (with cache support)
+    const mediaParts: string[] = [];
+    for (const m of mediaItems) {
+      if (currentConfig.media.cacheEnabled && m.url) {
+        const extMap: Record<string, string> = { image: '.jpg', file: '', voice: '.amr', video: '.mp4' };
+        const ext = m.name ? path.extname(m.name) : (extMap[m.type] || '');
+        const localPath = await downloadMedia(m.url, ext);
+        if (localPath) {
+          mediaParts.push(`[${m.type}: file://${localPath}${m.name ? ` (${m.name})` : ''}]`);
+          continue;
+        }
+      }
+      mediaParts.push(`[${m.type}: ${m.url}${m.name ? ` (${m.name})` : ''}]`);
+    }
+
+    const body = textParts.join(' ');
+    const mediaStr = mediaParts.length > 0 ? '\n' + mediaParts.join('\n') : '';
+    const content = body + mediaStr;
+    if (!content.trim()) return null;
+
+    return `[引用 ${senderName}(${senderQQ}) 的消息]\n${content}\n[/引用]`;
+  } catch (e: any) {
+    logger?.warn(`[OpenClaw] 解析引用消息失败: ${e.message}`);
+    return null;
+  }
 }
 
 // ========== Text Extraction from Chat Event ==========
@@ -176,26 +439,102 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function sendReply(ctx: any, messageType: string, groupId: any, userId: any, text: string): Promise<void> {
+async function sendReply(ctx: any, messageType: string, groupId: any, userId: any, text: string, opts?: { eventMessageId?: string | number }): Promise<void> {
   const action = messageType === 'group' ? 'send_group_msg' : 'send_private_msg';
   const idKey = messageType === 'group' ? 'group_id' : 'user_id';
   const idVal = String(messageType === 'group' ? groupId : userId);
 
-  const maxLen = 3000;
-  if (text.length <= maxLen) {
-    await ctx.actions.call(action, { [idKey]: idVal, message: text }, ctx.adapterName, ctx.pluginManager?.config);
-  } else {
-    const total = Math.ceil(text.length / maxLen);
-    for (let i = 0; i < text.length; i += maxLen) {
-      const idx = Math.floor(i / maxLen) + 1;
-      const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
-      await ctx.actions.call(
-        action,
-        { [idKey]: idVal, message: prefix + text.slice(i, i + maxLen) },
-        ctx.adapterName,
-        ctx.pluginManager?.config
-      );
-      if (i + maxLen < text.length) await sleep(1000);
+  // Build prefix segments for group replies (at + quote)
+  const prefixSegs: any[] = [];
+  if (messageType === 'group') {
+    if (currentConfig.behavior.replyQuoteMessage && opts?.eventMessageId) {
+      prefixSegs.push({ type: 'reply', data: { id: String(opts.eventMessageId) } });
+    }
+    if (currentConfig.behavior.replyAtSender) {
+      prefixSegs.push({ type: 'at', data: { qq: String(userId) } });
+      prefixSegs.push({ type: 'text', data: { text: ' ' } });
+    }
+  }
+
+  // Extract MEDIA: lines from reply
+  const mediaRegex = /^MEDIA:\s*(.+)$/gm;
+  const mediaFiles: string[] = [];
+  let match;
+  while ((match = mediaRegex.exec(text)) !== null) {
+    const filePath = match[1].trim();
+    if (filePath) mediaFiles.push(filePath);
+  }
+  let cleanText = text.replace(/^MEDIA:\s*.+$/gm, '').trim();
+
+  // Dedup: if text starts with @userId or [CQ:reply,...] that we're already adding as segments
+  if (messageType === 'group' && prefixSegs.length > 0) {
+    let deduped = false;
+    // Remove leading @mention matching the sender
+    const atPattern = new RegExp(`^@\\S+\\s*\\(${userId}\\)\\s*`);
+    if (currentConfig.behavior.replyAtSender && atPattern.test(cleanText)) {
+      cleanText = cleanText.replace(atPattern, '').trim();
+      deduped = true;
+    }
+    // Remove leading CQ:reply or [引用...] patterns
+    if (currentConfig.behavior.replyQuoteMessage) {
+      const cqReply = /^\[CQ:reply[^\]]*\]\s*/;
+      if (cqReply.test(cleanText)) {
+        cleanText = cleanText.replace(cqReply, '').trim();
+        deduped = true;
+      }
+    }
+    if (deduped) logger?.warn('[OpenClaw] 在消息开头发现重复的 @/引用，已去重');
+  }
+
+  // Send text part
+  if (cleanText) {
+    const maxLen = 3000;
+    if (cleanText.length <= maxLen) {
+      const message = [...prefixSegs, { type: 'text', data: { text: cleanText } }];
+      await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
+    } else {
+      const total = Math.ceil(cleanText.length / maxLen);
+      for (let i = 0; i < cleanText.length; i += maxLen) {
+        const idx = Math.floor(i / maxLen) + 1;
+        const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
+        const segs = i === 0 ? [...prefixSegs] : [];
+        segs.push({ type: 'text', data: { text: prefix + cleanText.slice(i, i + maxLen) } });
+        await ctx.actions.call(
+          action,
+          { [idKey]: idVal, message: segs },
+          ctx.adapterName,
+          ctx.pluginManager?.config
+        );
+        if (i + maxLen < cleanText.length) await sleep(1000);
+      }
+    }
+  }
+
+  // Send media files
+  for (const filePath of mediaFiles) {
+    try {
+      const fileName = path.basename(filePath);
+      const ext = path.extname(fileName).toLowerCase();
+      const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+
+      if (imageExts.includes(ext)) {
+        // Send as inline image message
+        const message = [{ type: 'image', data: { file: `file://${filePath}` } }];
+        await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
+      } else {
+        // Send as file upload
+        if (messageType === 'group') {
+          await ctx.actions.call('upload_group_file', {
+            group_id: idVal, file: filePath, name: fileName, upload_file: true,
+          }, ctx.adapterName, ctx.pluginManager?.config);
+        } else {
+          await ctx.actions.call('upload_private_file', {
+            user_id: idVal, file: filePath, name: fileName, upload_file: true,
+          }, ctx.adapterName, ctx.pluginManager?.config);
+        }
+      }
+    } catch (e: any) {
+      logger?.warn(`[OpenClaw] 发送文件失败 ${filePath}: ${e.message}`);
     }
   }
 }
@@ -231,6 +570,7 @@ export const plugin_init = async (ctx: any): Promise<void> => {
   logger.info(`[OpenClaw] 网关: ${currentConfig.openclaw.gatewayUrl}`);
   logger.info('[OpenClaw] 模式: 私聊全透传 + 群聊@触发 + 命令透传');
   logger.info('[OpenClaw] QQ Channel 插件初始化完成');
+  startCacheCleanup();
 };
 
 export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
@@ -242,16 +582,25 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
     const nickname = event.sender?.nickname || '未知';
     const messageType = event.message_type;
     const groupId = event.group_id;
+    const eventMessageId = event.message_id;
 
     if (!botUserId && event.self_id) {
       botUserId = event.self_id;
       logger.info(`[OpenClaw] Bot QQ: ${botUserId}`);
     }
 
-    // User whitelist
+    // User blacklist (takes priority over whitelist)
+    const userBlacklist = currentConfig.behavior.userBlacklist;
+    if (userBlacklist.length > 0 && userBlacklist.some((id) => Number(id) === Number(userId))) return;
+
+    // User whitelist (bypass in whitelisted groups if configured)
     const userWhitelist = currentConfig.behavior.userWhitelist;
     if (userWhitelist.length > 0) {
-      if (!userWhitelist.some((id) => Number(id) === Number(userId))) return;
+      const inWhitelistedGroup = messageType === 'group' && groupId
+        && currentConfig.behavior.groupBypassUserWhitelist
+        && currentConfig.behavior.groupWhitelist.length > 0
+        && currentConfig.behavior.groupWhitelist.some((id) => Number(id) === Number(groupId));
+      if (!inWhitelistedGroup && !userWhitelist.some((id) => Number(id) === Number(userId))) return;
     }
 
     let shouldHandle = false;
@@ -274,11 +623,27 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
     if (!shouldHandle) return;
 
-    const { extractedText, extractedMedia } = extractMessage(event.message || []);
+    const { extractedText, extractedMedia, replyMessageId } = extractMessage(event.message || []);
     const text = extractedText;
-    if (!text && extractedMedia.length === 0) return;
+    if (!text && extractedMedia.length === 0 && !replyMessageId) return;
+
+    // Resolve quoted/replied message
+    let replyContext = '';
+    if (replyMessageId && currentConfig.behavior.resolveReply) {
+      const resolved = await resolveReply(ctx, replyMessageId);
+      if (resolved) replyContext = resolved;
+    }
 
     const sessionBase = getSessionBase(messageType, userId, groupId);
+
+    // Command permission check: if commandAdminOnly is on, non-admin /commands are ignored
+    if (text?.startsWith('/') && currentConfig.behavior.commandAdminOnly) {
+      const admins = currentConfig.behavior.adminQQ;
+      if (admins.length > 0 && !admins.some((id) => Number(id) === Number(userId))) {
+        logger.info(`[OpenClaw] 非管理员指令已忽略: ${nickname}(${userId})`);
+        return;
+      }
+    }
 
     // Local commands
     if (text?.startsWith('/')) {
@@ -290,17 +655,52 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
         logger.info(`[OpenClaw] 本地命令: ${cmd} from ${nickname}(${userId})`);
         const result = LOCAL_COMMANDS[cmd](sessionBase, userId, nickname, messageType, groupId, args);
         if (result) {
-          await sendReply(ctx, messageType, groupId, userId, result);
+          await sendReply(ctx, messageType, groupId, userId, result, { eventMessageId });
           return;
         }
       }
     }
 
-    // Build message
-    let openclawMessage = text;
+    // Resolve group name for group messages
+    let groupName = '';
+    if (messageType === 'group' && groupId) {
+      try {
+        const info = await ctx.actions.call(
+          'get_group_info',
+          { group_id: String(groupId) },
+          ctx.adapterName,
+          ctx.pluginManager?.config
+        );
+        groupName = info?.data?.group_name || info?.group_name || '';
+      } catch {
+        groupName = '';
+      }
+    }
+
+    // Build message with sender identity context
+    const identityParts = [`[发送者: ${nickname} (QQ: ${userId})`];
+    if (messageType === 'group' && groupId) identityParts.push(`群: ${groupName || groupId} (${groupId})`);
+    identityParts.push(messageType === 'private' ? '私聊]' : '群聊]');
+    const identityHeader = identityParts.join(' | ');
+
+    let openclawMessage = `${identityHeader}\n`;
+    if (replyContext) openclawMessage += replyContext + '\n';
+    openclawMessage += text || '';
     if (extractedMedia.length > 0) {
-      const mediaInfo = extractedMedia.map((m) => `[${m.type}: ${m.url}]`).join('\n');
-      openclawMessage = openclawMessage ? `${openclawMessage}\n\n${mediaInfo}` : mediaInfo;
+      const mediaLines: string[] = [];
+      for (const m of extractedMedia) {
+        if (currentConfig.media.cacheEnabled && m.url) {
+          const extMap: Record<string, string> = { image: '.jpg', file: '', voice: '.amr', video: '.mp4' };
+          const ext = m.name ? path.extname(m.name) : (extMap[m.type] || '');
+          const localPath = await downloadMedia(m.url, ext);
+          if (localPath) {
+            mediaLines.push(`[${m.type}: file://${localPath}${m.name ? ` (${m.name})` : ''}]`);
+            continue;
+          }
+        }
+        mediaLines.push(`[${m.type}: ${m.url}${m.name ? ` (${m.name})` : ''}]`);
+      }
+      openclawMessage += '\n\n' + mediaLines.join('\n');
     }
 
     logger.info(
@@ -331,7 +731,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
         gw.eventHandlers.set('chat', (payload: any) => {
           if (!payload) return;
           logger.info(`[OpenClaw] chat event: state=${payload.state} session=${payload.sessionKey} run=${payload.runId?.slice(0, 8)}`);
-          if (payload.sessionKey !== sessionKey) return;
+          if (payload.sessionKey !== sessionKey && !payload.sessionKey?.endsWith(':' + sessionKey)) return;
 
           if (payload.state === 'final') {
             const text = extractContentText(payload.message);
@@ -364,7 +764,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
       const reply = await replyPromise;
 
       if (reply) {
-        await sendReply(ctx, messageType, groupId, userId, reply);
+        await sendReply(ctx, messageType, groupId, userId, reply, { eventMessageId });
       } else {
         logger.info('[OpenClaw] 无回复内容');
       }
@@ -382,10 +782,10 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
           { timeout: 180000, maxBuffer: 1024 * 1024 }
         );
         if (stdout.trim()) {
-          await sendReply(ctx, messageType, groupId, userId, stdout.trim());
+          await sendReply(ctx, messageType, groupId, userId, stdout.trim(), { eventMessageId });
         }
       } catch (e2: any) {
-        await sendReply(ctx, messageType, groupId, userId, `处理出错: ${(e as Error).message?.slice(0, 100)}`);
+        await sendReply(ctx, messageType, groupId, userId, `处理出错: ${(e as Error).message?.slice(0, 100)}`, { eventMessageId });
       }
     }
   } catch (outerErr: any) {
@@ -394,6 +794,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 };
 
 export const plugin_cleanup = async (): Promise<void> => {
+  stopCacheCleanup();
   if (gatewayClient) {
     gatewayClient.disconnect();
     gatewayClient = null;
@@ -410,10 +811,23 @@ export const plugin_get_config = async () => {
     'openclaw.cliPath': currentConfig.openclaw.cliPath,
     'behavior.privateChat': currentConfig.behavior.privateChat,
     'behavior.groupAtOnly': currentConfig.behavior.groupAtOnly,
+    'behavior.adminQQ': currentConfig.behavior.adminQQ.join(', '),
+    'behavior.commandAdminOnly': currentConfig.behavior.commandAdminOnly,
     'behavior.userWhitelist': currentConfig.behavior.userWhitelist.join(', '),
     'behavior.groupWhitelist': currentConfig.behavior.groupWhitelist.join(', '),
+    'behavior.groupBypassUserWhitelist': currentConfig.behavior.groupBypassUserWhitelist,
+    'behavior.userBlacklist': currentConfig.behavior.userBlacklist.join(', '),
     'behavior.debounceMs': currentConfig.behavior.debounceMs,
+    'behavior.resolveReply': currentConfig.behavior.resolveReply,
+    'behavior.replyMaxDepth': currentConfig.behavior.replyMaxDepth,
     'behavior.groupSessionMode': currentConfig.behavior.groupSessionMode,
+    'behavior.replyAtSender': currentConfig.behavior.replyAtSender,
+    'behavior.replyQuoteMessage': currentConfig.behavior.replyQuoteMessage,
+    'media.cacheEnabled': currentConfig.media.cacheEnabled,
+    'media.parseMface': currentConfig.media.parseMface,
+    'media.cachePath': currentConfig.media.cachePath,
+    'media.cacheMaxSizeMB': currentConfig.media.cacheMaxSizeMB,
+    'media.cacheTTLMinutes': currentConfig.media.cacheTTLMinutes,
   };
 };
 
@@ -421,12 +835,20 @@ export const plugin_set_config = async (ctx: any, config: any): Promise<void> =>
   const unflattened = unflattenConfig(config);
   // Convert comma-separated whitelist strings back to number[]
   if (unflattened.behavior) {
+    if (typeof unflattened.behavior.adminQQ === 'string') {
+      unflattened.behavior.adminQQ = unflattened.behavior.adminQQ
+        .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
+    }
     if (typeof unflattened.behavior.userWhitelist === 'string') {
       unflattened.behavior.userWhitelist = unflattened.behavior.userWhitelist
         .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
     }
     if (typeof unflattened.behavior.groupWhitelist === 'string') {
       unflattened.behavior.groupWhitelist = unflattened.behavior.groupWhitelist
+        .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
+    }
+    if (typeof unflattened.behavior.userBlacklist === 'string') {
+      unflattened.behavior.userBlacklist = unflattened.behavior.userBlacklist
         .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
     }
   }
@@ -444,6 +866,7 @@ export const plugin_set_config = async (ctx: any, config: any): Promise<void> =>
       logger?.error('[OpenClaw] 保存配置失败: ' + e.message);
     }
   }
+  startCacheCleanup();
 };
 
 // ========== Utils ==========

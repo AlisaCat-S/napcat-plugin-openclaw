@@ -7,10 +7,25 @@ export interface PluginConfig {
   behavior: {
     privateChat: boolean;
     groupAtOnly: boolean;
+    adminQQ: number[];
+    commandAdminOnly: boolean;
     userWhitelist: number[];
     groupWhitelist: number[];
+    groupBypassUserWhitelist: boolean;
+    userBlacklist: number[];
     debounceMs: number;
+    resolveReply: boolean;
+    replyMaxDepth: number;
     groupSessionMode: 'user' | 'shared';
+    replyAtSender: boolean;
+    replyQuoteMessage: boolean;
+  };
+  media: {
+    cacheEnabled: boolean;
+    parseMface: boolean;
+    cachePath: string;
+    cacheMaxSizeMB: number;
+    cacheTTLMinutes: number;
   };
 }
 
