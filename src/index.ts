@@ -27,6 +27,40 @@ let gatewayClient: GatewayClient | null = null;
 let currentConfig: PluginConfig = { ...DEFAULT_CONFIG };
 let cacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
+// ========== Send Rate Limiter ==========
+
+const sendQueue: Array<() => Promise<void>> = [];
+let lastSendTime = 0;
+let sendQueueProcessing = false;
+const SEND_INTERVAL_MS = 2000; // 0.5 msg/s = 1 msg per 2s
+
+async function processSendQueue(): Promise<void> {
+  if (sendQueueProcessing) return;
+  sendQueueProcessing = true;
+  while (sendQueue.length > 0) {
+    const now = Date.now();
+    const wait = SEND_INTERVAL_MS - (now - lastSendTime);
+    if (wait > 0) await sleep(wait);
+    const task = sendQueue.shift();
+    if (task) {
+      lastSendTime = Date.now();
+      try { await task(); } catch (e: any) { logger?.error(`[OpenClaw] 队列发送失败: ${e.message}`); }
+    }
+  }
+  sendQueueProcessing = false;
+}
+
+async function rateLimitedSend(fn: () => Promise<void>): Promise<void> {
+  const now = Date.now();
+  if (sendQueue.length === 0 && now - lastSendTime >= SEND_INTERVAL_MS) {
+    lastSendTime = now;
+    return fn();
+  }
+  sendQueue.push(fn);
+  logger?.info(`[OpenClaw] 发送速率限制，当前队列: ${sendQueue.length}`);
+  processSendQueue();
+}
+
 // ========== Media Cache ==========
 
 function getCachePath(): string {
@@ -491,7 +525,7 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
     const maxLen = 3000;
     if (cleanText.length <= maxLen) {
       const message = [...prefixSegs, { type: 'text', data: { text: cleanText } }];
-      await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
+      await rateLimitedSend(() => ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config));
     } else {
       const total = Math.ceil(cleanText.length / maxLen);
       for (let i = 0; i < cleanText.length; i += maxLen) {
@@ -499,13 +533,12 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
         const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
         const segs = i === 0 ? [...prefixSegs] : [];
         segs.push({ type: 'text', data: { text: prefix + cleanText.slice(i, i + maxLen) } });
-        await ctx.actions.call(
+        await rateLimitedSend(() => ctx.actions.call(
           action,
           { [idKey]: idVal, message: segs },
           ctx.adapterName,
           ctx.pluginManager?.config
-        );
-        if (i + maxLen < cleanText.length) await sleep(1000);
+        ));
       }
     }
   }
@@ -518,19 +551,17 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
       const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
 
       if (imageExts.includes(ext)) {
-        // Send as inline image message
         const message = [{ type: 'image', data: { file: `file://${filePath}` } }];
-        await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
+        await rateLimitedSend(() => ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config));
       } else {
-        // Send as file upload
         if (messageType === 'group') {
-          await ctx.actions.call('upload_group_file', {
+          await rateLimitedSend(() => ctx.actions.call('upload_group_file', {
             group_id: idVal, file: filePath, name: fileName, upload_file: true,
-          }, ctx.adapterName, ctx.pluginManager?.config);
+          }, ctx.adapterName, ctx.pluginManager?.config));
         } else {
-          await ctx.actions.call('upload_private_file', {
+          await rateLimitedSend(() => ctx.actions.call('upload_private_file', {
             user_id: idVal, file: filePath, name: fileName, upload_file: true,
-          }, ctx.adapterName, ctx.pluginManager?.config);
+          }, ctx.adapterName, ctx.pluginManager?.config));
         }
       }
     } catch (e: any) {
