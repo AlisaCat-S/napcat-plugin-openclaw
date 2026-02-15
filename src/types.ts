@@ -11,6 +11,7 @@ export interface PluginConfig {
     commandAdminOnly: boolean;
     userWhitelist: number[];
     groupWhitelist: number[];
+    groupBypassUserWhitelist: boolean;
     debounceMs: number;
     resolveReply: boolean;
     replyMaxDepth: number;

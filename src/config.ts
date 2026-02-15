@@ -14,6 +14,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
     commandAdminOnly: false,
     userWhitelist: [],
     groupWhitelist: [],
+    groupBypassUserWhitelist: false,
     debounceMs: 2000,
     resolveReply: true,
     replyMaxDepth: 1,
@@ -94,6 +95,13 @@ export function buildConfigSchema(): PluginConfigSchema {
       label: '群白名单',
       description: '允许使用的群号，多个用英文逗号分隔，留空表示不限制',
       default: '',
+    },
+    {
+      key: 'behavior.groupBypassUserWhitelist',
+      type: 'boolean',
+      label: '白名单群忽略用户白名单',
+      description: '开启后，白名单群聊中所有人 @ 都可触发回复，不受用户白名单限制',
+      default: DEFAULT_CONFIG.behavior.groupBypassUserWhitelist,
     },
     {
       key: 'behavior.debounceMs',

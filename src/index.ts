@@ -478,10 +478,14 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
       logger.info(`[OpenClaw] Bot QQ: ${botUserId}`);
     }
 
-    // User whitelist
+    // User whitelist (bypass in whitelisted groups if configured)
     const userWhitelist = currentConfig.behavior.userWhitelist;
     if (userWhitelist.length > 0) {
-      if (!userWhitelist.some((id) => Number(id) === Number(userId))) return;
+      const inWhitelistedGroup = messageType === 'group' && groupId
+        && currentConfig.behavior.groupBypassUserWhitelist
+        && currentConfig.behavior.groupWhitelist.length > 0
+        && currentConfig.behavior.groupWhitelist.some((id) => Number(id) === Number(groupId));
+      if (!inWhitelistedGroup && !userWhitelist.some((id) => Number(id) === Number(userId))) return;
     }
 
     let shouldHandle = false;
@@ -696,6 +700,7 @@ export const plugin_get_config = async () => {
     'behavior.commandAdminOnly': currentConfig.behavior.commandAdminOnly,
     'behavior.userWhitelist': currentConfig.behavior.userWhitelist.join(', '),
     'behavior.groupWhitelist': currentConfig.behavior.groupWhitelist.join(', '),
+    'behavior.groupBypassUserWhitelist': currentConfig.behavior.groupBypassUserWhitelist,
     'behavior.debounceMs': currentConfig.behavior.debounceMs,
     'behavior.resolveReply': currentConfig.behavior.resolveReply,
     'behavior.replyMaxDepth': currentConfig.behavior.replyMaxDepth,
