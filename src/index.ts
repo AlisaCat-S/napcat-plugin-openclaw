@@ -452,6 +452,7 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
     }
     if (currentConfig.behavior.replyAtSender) {
       prefixSegs.push({ type: 'at', data: { qq: String(userId) } });
+      prefixSegs.push({ type: 'text', data: { text: ' ' } });
     }
   }
 
