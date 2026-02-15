@@ -233,41 +233,85 @@ async function resolveReply(ctx: any, messageId: string): Promise<string | null>
 
     const senderName = msg.sender?.nickname || msg.sender?.user_id || '未知';
     const senderQQ = msg.sender?.user_id || '';
-    const segments = Array.isArray(msg.message) ? msg.message : [];
 
-    // Depth 1: extract without recursing into nested replies
     const textParts: string[] = [];
-    const mediaParts: string[] = [];
-    for (const seg of segments) {
-      switch (seg.type) {
-        case 'text': {
-          const t = seg.data?.text?.trim();
-          if (t) textParts.push(t);
-          break;
+    const mediaItems: ExtractedMedia[] = [];
+
+    // Try segments array first
+    const segments = Array.isArray(msg.message) ? msg.message : [];
+    if (segments.length > 0) {
+      for (const seg of segments) {
+        switch (seg.type) {
+          case 'text': {
+            const t = seg.data?.text?.trim();
+            if (t) textParts.push(t);
+            break;
+          }
+          case 'image':
+            if (seg.data?.url) mediaItems.push({ type: 'image', url: seg.data.url });
+            break;
+          case 'file':
+            if (seg.data?.url) mediaItems.push({ type: 'file', url: seg.data.url, name: seg.data?.name });
+            break;
+          case 'record':
+            if (seg.data?.url) mediaItems.push({ type: 'voice', url: seg.data.url });
+            break;
+          case 'video':
+            if (seg.data?.url) mediaItems.push({ type: 'video', url: seg.data.url });
+            break;
+          case 'at':
+            textParts.push(`@${seg.data?.name || seg.data?.qq}`);
+            break;
         }
-        case 'image':
-          if (seg.data?.url) mediaParts.push(`[image: ${seg.data.url}]`);
-          break;
-        case 'file':
-          if (seg.data?.url) mediaParts.push(`[file: ${seg.data.name || seg.data.url}]`);
-          break;
-        case 'record':
-          if (seg.data?.url) mediaParts.push(`[voice: ${seg.data.url}]`);
-          break;
-        case 'video':
-          if (seg.data?.url) mediaParts.push(`[video: ${seg.data.url}]`);
-          break;
-        case 'at':
-          textParts.push(`@${seg.data?.name || seg.data?.qq}`);
-          break;
-        // reply inside reply: skip (depth 1 only)
       }
+    } else if (msg.raw_message && typeof msg.raw_message === 'string') {
+      // Parse CQ codes from raw_message
+      const raw = msg.raw_message;
+      let lastIdx = 0;
+      const cqRegex = /\[CQ:(\w+)((?:,[^,\]]+)*)\]/g;
+      let match;
+      while ((match = cqRegex.exec(raw)) !== null) {
+        const before = raw.slice(lastIdx, match.index).trim();
+        if (before) textParts.push(before);
+        lastIdx = match.index + match[0].length;
+
+        const cqType = match[1];
+        const paramsStr = match[2];
+        const params: Record<string, string> = {};
+        if (paramsStr) {
+          for (const p of paramsStr.slice(1).split(',')) {
+            const eq = p.indexOf('=');
+            if (eq > 0) params[p.slice(0, eq)] = p.slice(eq + 1);
+          }
+        }
+        if (cqType === 'image' && params.url) mediaItems.push({ type: 'image', url: params.url });
+        else if (cqType === 'file' && params.url) mediaItems.push({ type: 'file', url: params.url, name: params.file });
+        else if (cqType === 'record' && params.url) mediaItems.push({ type: 'voice', url: params.url });
+        else if (cqType === 'video' && params.url) mediaItems.push({ type: 'video', url: params.url });
+        else if (cqType === 'at') textParts.push(`@${params.name || params.qq || ''}`);
+      }
+      const tail = raw.slice(lastIdx).trim();
+      if (tail) textParts.push(tail);
+    }
+
+    // Build media lines (with cache support)
+    const mediaParts: string[] = [];
+    for (const m of mediaItems) {
+      if (currentConfig.media.cacheEnabled && m.url) {
+        const extMap: Record<string, string> = { image: '.jpg', file: '', voice: '.amr', video: '.mp4' };
+        const ext = m.name ? path.extname(m.name) : (extMap[m.type] || '');
+        const localPath = await downloadMedia(m.url, ext);
+        if (localPath) {
+          mediaParts.push(`[${m.type}: file://${localPath}${m.name ? ` (${m.name})` : ''}]`);
+          continue;
+        }
+      }
+      mediaParts.push(`[${m.type}: ${m.url}${m.name ? ` (${m.name})` : ''}]`);
     }
 
     const body = textParts.join(' ');
     const mediaStr = mediaParts.length > 0 ? '\n' + mediaParts.join('\n') : '';
-    // Fallback to raw_message if segments yielded nothing
-    const content = (body || msg.raw_message || '') + mediaStr;
+    const content = body + mediaStr;
     if (!content.trim()) return null;
 
     return `[引用 ${senderName}(${senderQQ}) 的消息]\n${content}\n[/引用]`;
@@ -531,7 +575,6 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
 
           if (payload.state === 'final') {
             const text = extractContentText(payload.message);
-            logger.info(`[OpenClaw] final payload.message type=${typeof payload.message}, keys=${payload.message ? Object.keys(payload.message) : 'null'}, extracted="${text?.slice(0, 60)}"`);
             cleanup();
             resolve(text?.trim() || null);
           }
