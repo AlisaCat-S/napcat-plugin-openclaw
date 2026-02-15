@@ -32,14 +32,18 @@ let cacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
 const sendQueue: Array<() => Promise<void>> = [];
 let lastSendTime = 0;
 let sendQueueProcessing = false;
-const SEND_INTERVAL_MS = 2000; // 0.5 msg/s = 1 msg per 2s
+
+function getSendIntervalMs(): number {
+  return currentConfig.behavior.sendIntervalMs ?? 2000;
+}
 
 async function processSendQueue(): Promise<void> {
   if (sendQueueProcessing) return;
   sendQueueProcessing = true;
   while (sendQueue.length > 0) {
     const now = Date.now();
-    const wait = SEND_INTERVAL_MS - (now - lastSendTime);
+    const interval = getSendIntervalMs();
+    const wait = interval - (now - lastSendTime);
     if (wait > 0) await sleep(wait);
     const task = sendQueue.shift();
     if (task) {
@@ -51,8 +55,10 @@ async function processSendQueue(): Promise<void> {
 }
 
 async function rateLimitedSend(fn: () => Promise<void>): Promise<void> {
+  const interval = getSendIntervalMs();
+  if (interval <= 0) return fn();
   const now = Date.now();
-  if (sendQueue.length === 0 && now - lastSendTime >= SEND_INTERVAL_MS) {
+  if (sendQueue.length === 0 && now - lastSendTime >= interval) {
     lastSendTime = now;
     return fn();
   }
@@ -854,6 +860,7 @@ export const plugin_get_config = async () => {
     'behavior.groupSessionMode': currentConfig.behavior.groupSessionMode,
     'behavior.replyAtSender': currentConfig.behavior.replyAtSender,
     'behavior.replyQuoteMessage': currentConfig.behavior.replyQuoteMessage,
+    'behavior.sendIntervalMs': currentConfig.behavior.sendIntervalMs,
     'media.cacheEnabled': currentConfig.media.cacheEnabled,
     'media.parseMface': currentConfig.media.parseMface,
     'media.cachePath': currentConfig.media.cachePath,

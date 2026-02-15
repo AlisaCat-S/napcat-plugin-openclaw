@@ -19,6 +19,7 @@ export interface PluginConfig {
     groupSessionMode: 'user' | 'shared';
     replyAtSender: boolean;
     replyQuoteMessage: boolean;
+    sendIntervalMs: number;
   };
   media: {
     cacheEnabled: boolean;

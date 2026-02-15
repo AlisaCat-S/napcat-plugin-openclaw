@@ -22,6 +22,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
     groupSessionMode: 'user',
     replyAtSender: true,
     replyQuoteMessage: false,
+    sendIntervalMs: 2000,
   },
   media: {
     cacheEnabled: false,
@@ -159,6 +160,13 @@ export function buildConfigSchema(): PluginConfigSchema {
       label: '回复时引用原消息',
       description: '群聊回复时引用触发的那条消息',
       default: DEFAULT_CONFIG.behavior.replyQuoteMessage,
+    },
+    {
+      key: 'behavior.sendIntervalMs',
+      type: 'number',
+      label: '发送间隔 (ms)',
+      description: '全局消息发送最小间隔（毫秒），0 表示不限制',
+      default: DEFAULT_CONFIG.behavior.sendIntervalMs,
     },
     { key: '_header_media', type: 'text', label: '── 多媒体缓存 ──' },
     {
