@@ -379,19 +379,39 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
   }
   const cleanText = text.replace(/^MEDIA:\s*.+$/gm, '').trim();
 
+  // Parse text into message segments (text + at)
+  function buildMessageSegments(str: string): any[] {
+    const segments: any[] = [];
+    const atRegex = /@(\S+?)\s*\((\d+)\)/g;
+    let lastIdx = 0;
+    let m;
+    while ((m = atRegex.exec(str)) !== null) {
+      const before = str.slice(lastIdx, m.index);
+      if (before) segments.push({ type: 'text', data: { text: before } });
+      segments.push({ type: 'at', data: { qq: m[2] } });
+      lastIdx = m.index + m[0].length;
+    }
+    const tail = str.slice(lastIdx);
+    if (tail) segments.push({ type: 'text', data: { text: tail } });
+    return segments.length > 0 ? segments : [{ type: 'text', data: { text: str } }];
+  }
+
   // Send text part
   if (cleanText) {
     const maxLen = 3000;
     if (cleanText.length <= maxLen) {
-      await ctx.actions.call(action, { [idKey]: idVal, message: cleanText }, ctx.adapterName, ctx.pluginManager?.config);
+      const message = buildMessageSegments(cleanText);
+      await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
     } else {
       const total = Math.ceil(cleanText.length / maxLen);
       for (let i = 0; i < cleanText.length; i += maxLen) {
         const idx = Math.floor(i / maxLen) + 1;
         const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
+        const chunk = prefix + cleanText.slice(i, i + maxLen);
+        const message = buildMessageSegments(chunk);
         await ctx.actions.call(
           action,
-          { [idKey]: idVal, message: prefix + cleanText.slice(i, i + maxLen) },
+          { [idKey]: idVal, message },
           ctx.adapterName,
           ctx.pluginManager?.config
         );
