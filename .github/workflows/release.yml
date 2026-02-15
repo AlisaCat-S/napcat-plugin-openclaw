@@ -2,8 +2,6 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -48,7 +46,7 @@ jobs:
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
           else
-            VERSION="v$(TZ='Asia/Shanghai' date +'%Y%m%d.%H%M%S')"
+            VERSION="v$(date +'%Y%m%d%H%M%S')"
           fi
           CLEAN_VERSION=$(echo $VERSION | sed 's/^v//')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -56,17 +54,7 @@ jobs:
 
       - name: Update package.json version
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # For timestamp versions like v20260215.143000, convert to valid semver
-          if echo "$VERSION" | grep -qP '^\d{8}\.\d{6}$'; then
-            YEAR=$(echo "$VERSION" | cut -c1-4)
-            MMDD=$(echo "$VERSION" | cut -c5-8 | sed 's/^0*//')
-            HHMMSS=$(echo "$VERSION" | cut -d. -f2 | sed 's/^0*//')
-            SEMVER="${YEAR}.${MMDD}.${HHMMSS}"
-          else
-            SEMVER="${{ steps.version.outputs.clean_version }}"
-          fi
-          npm version "$SEMVER" --no-git-tag-version --allow-same-version
+          npm version ${{ steps.version.outputs.clean_version }} --no-git-tag-version --allow-same-version
 
 
       - name: Build project
