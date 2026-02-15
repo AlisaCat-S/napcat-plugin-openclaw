@@ -1,0 +1,79 @@
+name: Auto Build & Release
+
+on:
+  push:
+    branches:
+      - main
+      - 'fix/**'
+      - 'feat/**'
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/update-index.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Generate version (UTC+8 timestamp)
+        id: version
+        run: |
+          VERSION="v$(TZ='Asia/Shanghai' date +'%Y%m%d.%H%M%S')"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+
+      - name: Build project
+        run: pnpm run build
+
+      - name: Prepare release package
+        run: |
+          mkdir -p release
+          cp dist/index.mjs release/
+          cp dist/package.json release/
+          cd release
+          zip -r ../napcat-plugin-openclaw.zip index.mjs package.json
+
+      - name: Collect recent commits
+        id: commits
+        run: |
+          PREV_TAG=$(git tag -l "v*" --sort=-version:refname | head -1)
+          if [ -n "$PREV_TAG" ]; then
+            LOGS=$(git log --pretty=format:'- %s (%h)' "$PREV_TAG"..HEAD)
+          else
+            LOGS=$(git log --pretty=format:'- %s (%h)' -10)
+          fi
+          echo "$LOGS" > commits.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body_path: commits.txt
+          draft: false
+          files: napcat-plugin-openclaw.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
