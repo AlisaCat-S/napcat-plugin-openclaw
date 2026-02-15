@@ -12,6 +12,7 @@ export interface PluginConfig {
     userWhitelist: number[];
     groupWhitelist: number[];
     groupBypassUserWhitelist: boolean;
+    userBlacklist: number[];
     debounceMs: number;
     resolveReply: boolean;
     replyMaxDepth: number;

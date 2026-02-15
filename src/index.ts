@@ -478,6 +478,10 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
       logger.info(`[OpenClaw] Bot QQ: ${botUserId}`);
     }
 
+    // User blacklist (takes priority over whitelist)
+    const userBlacklist = currentConfig.behavior.userBlacklist;
+    if (userBlacklist.length > 0 && userBlacklist.some((id) => Number(id) === Number(userId))) return;
+
     // User whitelist (bypass in whitelisted groups if configured)
     const userWhitelist = currentConfig.behavior.userWhitelist;
     if (userWhitelist.length > 0) {
@@ -701,6 +705,7 @@ export const plugin_get_config = async () => {
     'behavior.userWhitelist': currentConfig.behavior.userWhitelist.join(', '),
     'behavior.groupWhitelist': currentConfig.behavior.groupWhitelist.join(', '),
     'behavior.groupBypassUserWhitelist': currentConfig.behavior.groupBypassUserWhitelist,
+    'behavior.userBlacklist': currentConfig.behavior.userBlacklist.join(', '),
     'behavior.debounceMs': currentConfig.behavior.debounceMs,
     'behavior.resolveReply': currentConfig.behavior.resolveReply,
     'behavior.replyMaxDepth': currentConfig.behavior.replyMaxDepth,
@@ -726,6 +731,10 @@ export const plugin_set_config = async (ctx: any, config: any): Promise<void> =>
     }
     if (typeof unflattened.behavior.groupWhitelist === 'string') {
       unflattened.behavior.groupWhitelist = unflattened.behavior.groupWhitelist
+        .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
+    }
+    if (typeof unflattened.behavior.userBlacklist === 'string') {
+      unflattened.behavior.userBlacklist = unflattened.behavior.userBlacklist
         .split(',').map((s: string) => s.trim()).filter(Boolean).map(Number);
     }
   }

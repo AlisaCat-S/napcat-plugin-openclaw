@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
     userWhitelist: [],
     groupWhitelist: [],
     groupBypassUserWhitelist: false,
+    userBlacklist: [],
     debounceMs: 2000,
     resolveReply: true,
     replyMaxDepth: 1,
@@ -102,6 +103,13 @@ export function buildConfigSchema(): PluginConfigSchema {
       label: '白名单群忽略用户白名单',
       description: '开启后，白名单群聊中所有人 @ 都可触发回复，不受用户白名单限制',
       default: DEFAULT_CONFIG.behavior.groupBypassUserWhitelist,
+    },
+    {
+      key: 'behavior.userBlacklist',
+      type: 'string',
+      label: '用户黑名单',
+      description: '禁止使用的 QQ 号，多个用英文逗号分隔，黑名单优先于白名单',
+      default: '',
     },
     {
       key: 'behavior.debounceMs',
