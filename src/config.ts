@@ -20,6 +20,8 @@ export const DEFAULT_CONFIG: PluginConfig = {
     resolveReply: true,
     replyMaxDepth: 1,
     groupSessionMode: 'user',
+    replyAtSender: true,
+    replyQuoteMessage: false,
   },
   media: {
     cacheEnabled: false,
@@ -142,6 +144,20 @@ export function buildConfigSchema(): PluginConfigSchema {
         { label: '独立会话 (每人独立)', value: 'user' },
         { label: '共享会话 (群共享)', value: 'shared' },
       ],
+    },
+    {
+      key: 'behavior.replyAtSender',
+      type: 'boolean',
+      label: '回复时 @ 发送者',
+      description: '群聊回复时 @ 触发消息的用户',
+      default: DEFAULT_CONFIG.behavior.replyAtSender,
+    },
+    {
+      key: 'behavior.replyQuoteMessage',
+      type: 'boolean',
+      label: '回复时引用原消息',
+      description: '群聊回复时引用触发的那条消息',
+      default: DEFAULT_CONFIG.behavior.replyQuoteMessage,
     },
     { key: '_header_media', type: 'text', label: '── 多媒体缓存 ──' },
     {

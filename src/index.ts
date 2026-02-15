@@ -365,10 +365,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function sendReply(ctx: any, messageType: string, groupId: any, userId: any, text: string): Promise<void> {
+async function sendReply(ctx: any, messageType: string, groupId: any, userId: any, text: string, opts?: { eventMessageId?: string | number }): Promise<void> {
   const action = messageType === 'group' ? 'send_group_msg' : 'send_private_msg';
   const idKey = messageType === 'group' ? 'group_id' : 'user_id';
   const idVal = String(messageType === 'group' ? groupId : userId);
+
+  // Build prefix segments for group replies (at + quote)
+  const prefixSegs: any[] = [];
+  if (messageType === 'group') {
+    if (currentConfig.behavior.replyQuoteMessage && opts?.eventMessageId) {
+      prefixSegs.push({ type: 'reply', data: { id: String(opts.eventMessageId) } });
+    }
+    if (currentConfig.behavior.replyAtSender) {
+      prefixSegs.push({ type: 'at', data: { qq: String(userId) } });
+    }
+  }
 
   // Extract MEDIA: lines from reply
   const mediaRegex = /^MEDIA:\s*(.+)$/gm;
@@ -378,21 +389,44 @@ async function sendReply(ctx: any, messageType: string, groupId: any, userId: an
     const filePath = match[1].trim();
     if (filePath) mediaFiles.push(filePath);
   }
-  const cleanText = text.replace(/^MEDIA:\s*.+$/gm, '').trim();
+  let cleanText = text.replace(/^MEDIA:\s*.+$/gm, '').trim();
+
+  // Dedup: if text starts with @userId or [CQ:reply,...] that we're already adding as segments
+  if (messageType === 'group' && prefixSegs.length > 0) {
+    let deduped = false;
+    // Remove leading @mention matching the sender
+    const atPattern = new RegExp(`^@\\S+\\s*\\(${userId}\\)\\s*`);
+    if (currentConfig.behavior.replyAtSender && atPattern.test(cleanText)) {
+      cleanText = cleanText.replace(atPattern, '').trim();
+      deduped = true;
+    }
+    // Remove leading CQ:reply or [引用...] patterns
+    if (currentConfig.behavior.replyQuoteMessage) {
+      const cqReply = /^\[CQ:reply[^\]]*\]\s*/;
+      if (cqReply.test(cleanText)) {
+        cleanText = cleanText.replace(cqReply, '').trim();
+        deduped = true;
+      }
+    }
+    if (deduped) logger?.warn('[OpenClaw] 在消息开头发现重复的 @/引用，已去重');
+  }
 
   // Send text part
   if (cleanText) {
     const maxLen = 3000;
     if (cleanText.length <= maxLen) {
-      await ctx.actions.call(action, { [idKey]: idVal, message: cleanText }, ctx.adapterName, ctx.pluginManager?.config);
+      const message = [...prefixSegs, { type: 'text', data: { text: cleanText } }];
+      await ctx.actions.call(action, { [idKey]: idVal, message }, ctx.adapterName, ctx.pluginManager?.config);
     } else {
       const total = Math.ceil(cleanText.length / maxLen);
       for (let i = 0; i < cleanText.length; i += maxLen) {
         const idx = Math.floor(i / maxLen) + 1;
         const prefix = total > 1 ? `[${idx}/${total}]\n` : '';
+        const segs = i === 0 ? [...prefixSegs] : [];
+        segs.push({ type: 'text', data: { text: prefix + cleanText.slice(i, i + maxLen) } });
         await ctx.actions.call(
           action,
-          { [idKey]: idVal, message: prefix + cleanText.slice(i, i + maxLen) },
+          { [idKey]: idVal, message: segs },
           ctx.adapterName,
           ctx.pluginManager?.config
         );
@@ -473,6 +507,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
     const nickname = event.sender?.nickname || '未知';
     const messageType = event.message_type;
     const groupId = event.group_id;
+    const eventMessageId = event.message_id;
 
     if (!botUserId && event.self_id) {
       botUserId = event.self_id;
@@ -545,7 +580,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
         logger.info(`[OpenClaw] 本地命令: ${cmd} from ${nickname}(${userId})`);
         const result = LOCAL_COMMANDS[cmd](sessionBase, userId, nickname, messageType, groupId, args);
         if (result) {
-          await sendReply(ctx, messageType, groupId, userId, result);
+          await sendReply(ctx, messageType, groupId, userId, result, { eventMessageId });
           return;
         }
       }
@@ -654,7 +689,7 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
       const reply = await replyPromise;
 
       if (reply) {
-        await sendReply(ctx, messageType, groupId, userId, reply);
+        await sendReply(ctx, messageType, groupId, userId, reply, { eventMessageId });
       } else {
         logger.info('[OpenClaw] 无回复内容');
       }
@@ -672,10 +707,10 @@ export const plugin_onmessage = async (ctx: any, event: any): Promise<void> => {
           { timeout: 180000, maxBuffer: 1024 * 1024 }
         );
         if (stdout.trim()) {
-          await sendReply(ctx, messageType, groupId, userId, stdout.trim());
+          await sendReply(ctx, messageType, groupId, userId, stdout.trim(), { eventMessageId });
         }
       } catch (e2: any) {
-        await sendReply(ctx, messageType, groupId, userId, `处理出错: ${(e as Error).message?.slice(0, 100)}`);
+        await sendReply(ctx, messageType, groupId, userId, `处理出错: ${(e as Error).message?.slice(0, 100)}`, { eventMessageId });
       }
     }
   } catch (outerErr: any) {
@@ -711,6 +746,8 @@ export const plugin_get_config = async () => {
     'behavior.resolveReply': currentConfig.behavior.resolveReply,
     'behavior.replyMaxDepth': currentConfig.behavior.replyMaxDepth,
     'behavior.groupSessionMode': currentConfig.behavior.groupSessionMode,
+    'behavior.replyAtSender': currentConfig.behavior.replyAtSender,
+    'behavior.replyQuoteMessage': currentConfig.behavior.replyQuoteMessage,
     'media.cacheEnabled': currentConfig.media.cacheEnabled,
     'media.cachePath': currentConfig.media.cachePath,
     'media.cacheMaxSizeMB': currentConfig.media.cacheMaxSizeMB,

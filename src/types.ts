@@ -17,6 +17,8 @@ export interface PluginConfig {
     resolveReply: boolean;
     replyMaxDepth: number;
     groupSessionMode: 'user' | 'shared';
+    replyAtSender: boolean;
+    replyQuoteMessage: boolean;
   };
   media: {
     cacheEnabled: boolean;
