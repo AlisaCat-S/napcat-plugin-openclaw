@@ -25,6 +25,7 @@ export const DEFAULT_CONFIG: PluginConfig = {
   },
   media: {
     cacheEnabled: false,
+    parseMface: true,
     cachePath: '/tmp/napcat/napcat-plugin-openclaw/download',
     cacheMaxSizeMB: 2048,
     cacheTTLMinutes: 60,
@@ -166,6 +167,13 @@ export function buildConfigSchema(): PluginConfigSchema {
       label: '启用缓存模式',
       description: '下载多媒体文件到本地，将本地路径传递给后端（而非 URL）',
       default: DEFAULT_CONFIG.media.cacheEnabled,
+    },
+    {
+      key: 'media.parseMface',
+      type: 'boolean',
+      label: '解析商城表情为图片',
+      description: '将商城大表情下载为图片传给后端（需开启缓存模式），关闭则仅发送文字描述',
+      default: DEFAULT_CONFIG.media.parseMface,
     },
     {
       key: 'media.cachePath',

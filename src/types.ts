@@ -22,6 +22,7 @@ export interface PluginConfig {
   };
   media: {
     cacheEnabled: boolean;
+    parseMface: boolean;
     cachePath: string;
     cacheMaxSizeMB: number;
     cacheTTLMinutes: number;

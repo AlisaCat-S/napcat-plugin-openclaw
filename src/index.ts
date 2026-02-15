@@ -264,15 +264,14 @@ function extractMessage(segments: any[]): { extractedText: string; extractedMedi
         break;
       case 'mface': {
         const summary = seg.data?.summary || '[商城表情]';
-        const emojiId = seg.data?.emoji_id;
-        const key = seg.data?.key;
-        if (emojiId && key) {
-          const url = `https://gxh.vip.qq.com/club/item/parcel/item/${emojiId.slice(0, 2)}/${emojiId}/raw300.gif`;
-          media.push({ type: 'image', url });
-          textParts.push(summary);
-        } else {
-          textParts.push(summary);
+        if (currentConfig.media.cacheEnabled && currentConfig.media.parseMface) {
+          const emojiId = seg.data?.emoji_id;
+          if (emojiId) {
+            const url = `https://gxh.vip.qq.com/club/item/parcel/item/${emojiId.slice(0, 2)}/${emojiId}/raw300.gif`;
+            media.push({ type: 'image', url });
+          }
         }
+        textParts.push(summary);
         break;
       }
     }
@@ -328,15 +327,14 @@ async function resolveReply(ctx: any, messageId: string): Promise<string | null>
             break;
           case 'mface': {
             const summary = seg.data?.summary || '[商城表情]';
-            const emojiId = seg.data?.emoji_id;
-            const key = seg.data?.key;
-            if (emojiId && key) {
-              const url = `https://gxh.vip.qq.com/club/item/parcel/item/${emojiId.slice(0, 2)}/${emojiId}/raw300.gif`;
-              mediaItems.push({ type: 'image', url });
-              textParts.push(summary);
-            } else {
-              textParts.push(summary);
+            if (currentConfig.media.cacheEnabled && currentConfig.media.parseMface) {
+              const emojiId = seg.data?.emoji_id;
+              if (emojiId) {
+                const url = `https://gxh.vip.qq.com/club/item/parcel/item/${emojiId.slice(0, 2)}/${emojiId}/raw300.gif`;
+                mediaItems.push({ type: 'image', url });
+              }
             }
+            textParts.push(summary);
             break;
           }
         }
@@ -825,6 +823,7 @@ export const plugin_get_config = async () => {
     'behavior.replyAtSender': currentConfig.behavior.replyAtSender,
     'behavior.replyQuoteMessage': currentConfig.behavior.replyQuoteMessage,
     'media.cacheEnabled': currentConfig.media.cacheEnabled,
+    'media.parseMface': currentConfig.media.parseMface,
     'media.cachePath': currentConfig.media.cachePath,
     'media.cacheMaxSizeMB': currentConfig.media.cacheMaxSizeMB,
     'media.cacheTTLMinutes': currentConfig.media.cacheTTLMinutes,
