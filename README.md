@@ -7,17 +7,21 @@
 ## ✨ 功能
 
 - **私聊全透传** — 白名单内用户的私聊消息直接转发给 OpenClaw Agent
-- **群聊 @触发** — 群聊中仅 @bot 时触发回复
+- **群聊 @触发** — 群聊中仅 @bot 时触发回复（可配置）
 - **斜杠命令** — `/status`、`/model`、`/think`、`/verbose`、`/new`、`/stop` 等，与 OpenClaw TUI 完全一致
-- **图片/文件支持** — QQ 发图/文件自动下载缓存，Agent 可直接读取；Agent 回复中的图片自动发送到 QQ
-- **智能分段** — 超长回复按代码块 > 段落 > 句号智能切割，不在代码块中间断开
+- **图片/文件支持** — QQ 发图/文件自动下载缓存，Agent 可直接读取；Agent 回复中的 `MEDIA:` 标签自动发送图片/文件到 QQ
+- **引用消息解析** — 自动解析回复引用的原始消息内容（支持多媒体、CQ 码解析），可配置解析深度
+- **表情解析** — QQ 系统表情转为中文名称，商城大表情可下载为图片传给后端（需开启缓存）
+- **发送者身份注入** — 自动将发送者昵称、QQ 号、群名等信息注入消息上下文
+- **群聊回复增强** — 可配置回复时 @发送者、引用原消息，自动去重
 - **消息防抖** — 快速连发的消息自动合并为一条请求（可配置时间窗口）
+- **发送速率限制** — 全局消息发送队列，限制 0.5 msg/s（每 2 秒 1 条），防止风控
 - **输入状态** — 私聊中显示"对方正在输入..."
 - **WS 心跳自动重连** — 15 秒心跳检测，断线 5 秒后自动重连，无需人工干预
-- **Agent 主动推送** — Agent 端向 QQ session 发送的消息自动推送到对应 QQ 用户/群
 - **群聊 Session 模式** — 可选每人独立 session 或群共享 session
+- **权限控制** — 用户白名单/黑名单、群白名单、管理员 QQ、指令仅管理员等
 - **WebUI 配置面板** — 在 NapCat WebUI 中直接配置所有选项
-- **Token 脱敏** — WebUI 中 Gateway Token 显示为脱敏格式
+- **多媒体缓存** — 可配置缓存目录、大小上限、TTL 自动清理
 - **CLI 回退** — Gateway WS 断连时自动回退到 `openclaw agent` CLI
 
 ## 📦 安装
@@ -43,16 +47,42 @@ pnpm build
 
 在 NapCat WebUI 插件配置面板中设置，或编辑配置文件：
 
+### OpenClaw 连接
+
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `openclaw.token` | OpenClaw Gateway 认证 Token | （必填） |
 | `openclaw.gatewayUrl` | Gateway WebSocket 地址 | `ws://127.0.0.1:18789` |
+| `openclaw.cliPath` | openclaw CLI 可执行文件路径 | `/root/.nvm/.../openclaw` |
+
+### 行为设置
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
 | `behavior.privateChat` | 是否接收私聊消息 | `true` |
 | `behavior.groupAtOnly` | 群聊仅 @bot 触发 | `true` |
+| `behavior.adminQQ` | 管理员 QQ 号（逗号分隔） | 空 |
+| `behavior.commandAdminOnly` | / 指令仅管理员可用 | `false` |
 | `behavior.userWhitelist` | 用户白名单（QQ号，逗号分隔） | 空（全部允许） |
 | `behavior.groupWhitelist` | 群白名单（群号，逗号分隔） | 空（全部允许） |
+| `behavior.groupBypassUserWhitelist` | 白名单群忽略用户白名单 | `false` |
+| `behavior.userBlacklist` | 用户黑名单（QQ号，逗号分隔） | 空 |
 | `behavior.debounceMs` | 消息防抖时长（毫秒） | `2000` |
-| `behavior.groupSessionMode` | 群聊 Session 模式 | `user`（每人独立） |
+| `behavior.resolveReply` | 解析引用消息内容 | `true` |
+| `behavior.replyMaxDepth` | 引用解析最大深度 | `1` |
+| `behavior.groupSessionMode` | 群聊 Session 模式 | `user` |
+| `behavior.replyAtSender` | 群聊回复时 @发送者 | `true` |
+| `behavior.replyQuoteMessage` | 群聊回复时引用原消息 | `false` |
+
+### 多媒体缓存
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `media.cacheEnabled` | 启用多媒体缓存模式 | `false` |
+| `media.parseMface` | 商城表情下载为图片（需开启缓存） | `true` |
+| `media.cachePath` | 缓存目录路径 | `/tmp/napcat/.../download` |
+| `media.cacheMaxSizeMB` | 缓存上限（MB） | `2048` |
+| `media.cacheTTLMinutes` | 缓存过期时间（分钟） | `60` |
 
 ### 群聊 Session 模式
 
@@ -92,11 +122,11 @@ QQ 用户 ←→ NapCat ←→ 本插件 ←→ OpenClaw Gateway (WS RPC)
 
 - **入站消息**：插件通过 Gateway 的 `chat.send` RPC 方法发送消息
 - **回复接收**：监听 `chat` event 的 `final` 帧获取完整回复（非流式，一次性返回）
-- **图片处理**：下载到插件 `cache/media/` 目录，Agent 通过 `read` tool 直接读取
+- **图片处理**：下载到缓存目录，Agent 通过 `read` tool 直接读取
 - **认证协议**：Gateway WS challenge-response 协议
 - **心跳机制**：15s ping/pong + 30s 超时检测 + 5s 自动重连
-- **并发处理**：按 `runId` 路由 event，支持多消息并发处理
+- **速率控制**：全局发送队列，2s 间隔，防止 QQ 风控
 
 ## 📝 License
 
-MIT
+MIT © [CharTyr](https://github.com/CharTyr), [BoxyCat](https://github.com/BoxyCat)
