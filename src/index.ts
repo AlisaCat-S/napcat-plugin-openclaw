@@ -156,6 +156,7 @@ const sessionEpochs = new Map<string, number>();
 
 function getSessionBase(messageType: string, userId: number | string, groupId?: number | string): string {
   if (messageType === 'private') return `qq-${userId}`;
+  if (currentConfig.behavior.groupSessionMode === 'shared') return `qq-g${groupId}`;
   return `qq-g${groupId}-${userId}`;
 }
 
